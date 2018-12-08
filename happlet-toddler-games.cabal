@@ -37,15 +37,16 @@ DESCRIPTION   :
         toys or games made by the Disney corporation. Not even close.
 
     *   a game that runs in the browser. No, it requirs Gtk+, which
-        works best on Linux.
+        works best on Linux, but can be made to work on Windows and
+        Mac OS as well
 
     *   a game with lots of cute assets like sounds and animation. No,
         you the parent/admin must supply and configure your own
         assets.
 
     *   a game that safely prevents kids from accidentally deleting your
-        files. Players click out of the game window and start pressing
-        random keys
+        files. Players can click out of the game window and start
+        pressing random keys; always supervise young children.
 
     Most of these games are designed to present graphics and sound
     which can be configured by modifying the configuration files,
@@ -60,7 +61,7 @@ DESCRIPTION   :
     animations in response to winning gameplay, again which sounds and
     images are displayed must be configured by the parent/admin.
 
-    This game contains a few modules.
+    Here are some game ideas that I want to work on:
 
     1.  __Type the Alphabet__: in which players get a randomly
         selected audio/visual reward for pressing the correct next key
@@ -92,6 +93,10 @@ Executable happlet-toddler-games {
 
   HS-SOURCE-DIRS:    src
   DEFAULT-LANGUAGE:  Haskell2010
+  MAIN-IS:           Main.hs
+
+  OTHER-MODULES:
+    Happlets.Games.Toddler.AsciiArt
 
   GHC-OPTIONS: -Wall
     -fno-warn-name-shadowing
