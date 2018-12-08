@@ -1,0 +1,136 @@
+-- "procgen.cabal" build configuration for this project.
+--
+-- Copyright (C) 2018  Ramin Honary.
+--
+-- "procgen" is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Affero General Public License (AGPL)
+-- as published by the Free Software Foundation.
+--
+-- "procgen" is distributed in the hope that it will be useful, but
+-- WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+-- See the GNU Affero General Public License for more details.
+--
+-- You should have received a copy of the GNU General Public License
+-- along with this program (see the file called "LICENSE"). If not, see
+-- <http://www.gnu.org/licenses/agpl.html>.
+
+NAME          : happlet-toddler-games
+VERSION       : 0.1.0.0
+AUTHOR        : Ramin Honary
+COPYRIGHT     : (C) 2018 Ramin Honary, all rights reserved.
+MAINTAINER    : RaminHAL9001@gmail.com
+HOMEPAGE      : https://github.com/RaminHAL9001/procgen
+LICENSE       : AGPL
+LICENSE-FILE  : LICENSE
+BUILD-TYPE    : Simple
+CABAL-VERSION : >= 1.18
+
+CATEGORY      : 
+SYNOPSIS      : Games for Toddlers (kids age 2-5) built on the Happlets GTK+ Library
+
+DESCRIPTION   :
+    .
+    What this game is not:
+
+    *   a fully completed, batteries included product that resembles any
+        toys or games made by the Disney corporation. Not even close.
+
+    *   a game that runs in the browser. No, it requirs Gtk+, which
+        works best on Linux.
+
+    *   a game with lots of cute assets like sounds and animation. No,
+        you the parent/admin must supply and configure your own
+        assets.
+
+    *   a game that safely prevents kids from accidentally deleting your
+        files. Players click out of the game window and start pressing
+        random keys
+
+    Most of these games are designed to present graphics and sound
+    which can be configured by modifying the configuration files,
+    however without config files the games won't work well, if at
+    all. It is up to you to retrieve your own assets for this game.
+    
+    It is best to run this program with the window maximized to occupy
+    the whole screen, to reduce the odds of clicks and key-presses
+    outside of the window result in the game being obscured.
+
+    Most of these games play sound and display images or simple
+    animations in response to winning gameplay, again which sounds and
+    images are displayed must be configured by the parent/admin.
+
+    This game contains a few modules.
+
+    1.  __Type the Alphabet__: in which players get a randomly
+        selected audio/visual reward for pressing the correct next key
+        in the sequence.
+
+    2.  __Colorful ASCII Art__: in which players draw pictures with
+        ASCII and can change the forecolor/backcolor of each
+        character. Simple animations are possible.
+
+    3.  __Musical Instrument__: in which players assign sound effects
+        to letters on the keyboard and can play the sound effects by
+        pressing keys.
+
+    4.  __Memory and Matching__: select matching pairs of cards in a
+        grid.
+
+    5.  __Virtual Pet__: create a home for your virtual pet, feed it
+        and play with it every day, if you don't it will run away.
+
+    6.  __Flashcard Wizard__: explore a procedurally generated world,
+        learn to defend yourself and attack enemies by answering
+        flashcard questions (e.g. arithmetic, spelling), gather
+        treasure, trade for supplies, the more flashcards you answer
+        correctly, the more you improve your magic skills.
+
+    .
+
+Executable happlet-toddler-games {
+
+  HS-SOURCE-DIRS:    src
+  DEFAULT-LANGUAGE:  Haskell2010
+
+  GHC-OPTIONS: -Wall
+    -fno-warn-name-shadowing
+    -fno-warn-unused-do-bind
+
+  BUILD-DEPENDS:
+    binary               >=0.7.0.0  && <0.9.0.0,
+    bytestring           >=0.10.0.0 && <1.0.0.0,
+    cairo                >=0.11.0.0 && <1.0.0.0,
+    containers           >=0.5.5.0  && <0.6.0.0,
+    happlets             >=0.1.0.0  && <=1.0.0.0,
+    happlets-lib-gtk     >=0.1.0.0  && <=1.0.0.0,
+    lens                 >=4.0.0.0  && <5.0.0.0,
+    linear               >=1.20.0   && <2.0.0.0,
+    MonadRandom          >=0.5.0    && <1.0.0, 
+    mtl                  >=2.2.0    && <=2.2.2,
+    primitive            >=0.6.4.0  && <1.0.0.0,
+    tf-random            >=0.5      && <=1.0,
+    semigroups           >=0.16.0   && <0.19.0,
+    time                 >=1.4.0.0  && <1.10.0.0,
+    text                 >=1.1.1.4  && <=2.0.0.0,
+    vector               >=0.11.0.0 && <=1.0.0.0, 
+    base                 >=4.7      && <4.11
+
+  DEFAULT-EXTENSIONS:
+    DeriveDataTypeable
+    DeriveFunctor
+    ExistentialQuantification
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    GeneralizedNewtypeDeriving
+    ImplicitParams
+    LambdaCase
+    MultiParamTypeClasses
+    NoMonomorphismRestriction
+    OverloadedStrings
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+}

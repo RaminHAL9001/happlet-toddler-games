@@ -1,0 +1,6 @@
+:set prompt "\x3BB "
+:set prompt-cont "... "
+:set stop :list
+:show context
+:show modules
+:show imports
