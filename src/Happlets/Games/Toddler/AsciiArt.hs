@@ -63,12 +63,15 @@ newAsciiArtGame = do
 startAsciiArtGame :: PixSize -> GtkGUI AsciiArtGame ()
 startAsciiArtGame winsize = do
   setWindowGridSize winsize
-  resizeEvents setWindowGridSize
+  resizeEvents $ setWindowGridSize >=> \ () -> do
+    bg <- use asciiBackcolor
+    let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
+    onCanvas $ cairoRender $ cairoClearCanvas r g b 0.75
+    refreshWindow
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
   bg <- use asciiBackcolor
-  let (r, g, b, a) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
-  onOSBuffer $ cairoRender $ cairoClearCanvas r g b a
-  refreshWindow
+  let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
+  onCanvas $ cairoRender $ cairoClearCanvas r g b 0.75
 
 ----------------------------------------------------------------------------------------------------
 
