@@ -2,7 +2,7 @@ module Happlets.Games.Toddler.AsciiArt where
 
 import           Happlets.Lib.Gtk
 import           Happlets.Draw.Text
-                   ( TextGridRow(..), TextGridColumn(..),
+                   ( TextGridRow(..), TextGridColumn(..), gridColumn, columnInt,
                      TextGridLocation(..), TextGridSize, textGridLocation
                    )
 
@@ -48,7 +48,8 @@ data AsciiArtGame
 newAsciiArtGame :: IO AsciiArtGame
 newAsciiArtGame = do
   let (TextGridLocation (TextGridRow rows) (TextGridColumn columns)) = theAsciiMatrixSize
-  vec <- Mutable.new (rows * columns)
+  vec <- Mutable.replicate (rows * columns)
+      (fromIntegral (ord ' ') .|. gameForecolorToCell WHITE .|. gameBackcolorToCell BLACK)
   return AsciiArtGame
     { theAsciiForecolor = WHITE
     , theAsciiBackcolor = BLACK
@@ -63,7 +64,7 @@ startAsciiArtGame :: PixSize -> GtkGUI AsciiArtGame ()
 startAsciiArtGame winsize = do
   setWindowGridSize winsize
   resizeEvents setWindowGridSize
-  keyboardEvents $ setGameColor <> fillCell
+  keyboardEvents $ setGameColor <> fillCell <> moveCursor
   bg <- use asciiBackcolor
   let (r, g, b, a) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
   onOSBuffer $ cairoRender $ cairoClearCanvas r g b a
@@ -130,6 +131,22 @@ fillCell = \ case
         advanceCursor (TextGridRow 0) (TextGridColumn 1)
       _ -> return ()
   _                           -> return ()
+
+moveCursor :: Keyboard -> GtkGUI AsciiArtGame ()
+moveCursor = \ case
+  Keyboard pressed mods point -> when (pressed && mods == noModifiers) $ case point of
+    UpArrowKey    -> advanceCursor (TextGridRow (-1)) (TextGridColumn   0 )
+    DownArrowKey  -> advanceCursor (TextGridRow   1 ) (TextGridColumn   0 )
+    LeftArrowKey  -> advanceCursor (TextGridRow   0 ) (TextGridColumn (-1))
+    RightArrowKey -> advanceCursor (TextGridRow   0 ) (TextGridColumn   1 )
+    EnterKey      -> enterKey
+    ReturnKey     -> enterKey
+    _             -> return ()
+  _             -> return ()
+  where
+    enterKey = do
+      advanceCursor (TextGridRow   1 ) (TextGridColumn   0 )
+      asciiCursor . gridColumn . columnInt .= 0
 
 -- | The foreground color take up the first 4 bits in the upper 11 bits of the Word32 after the
 -- first 21 reserved for the character.
