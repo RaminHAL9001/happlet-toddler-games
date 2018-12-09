@@ -41,8 +41,7 @@ data AsciiArtGame
       -- ^ the size of the game's visible window, in grid size units.
     , theAsciiWinOff    :: !TextGridLocation
       -- ^ the window offset relative to the top-left of the text matrix.
-    , theAsciiCellSize  :: !(V2 Double)
-      -- ^ the pixel size of each character
+    , theAsciiFontSize  :: !Double
     , theAsciiMatrix    :: !(Mutable.IOVector Word32)
     }
 
@@ -51,12 +50,12 @@ newAsciiArtGame = do
   let (TextGridLocation (TextGridRow rows) (TextGridColumn columns)) = theAsciiMatrixSize
   vec <- Mutable.new (rows * columns)
   return AsciiArtGame
-    { theAsciiForecolor = GRAY
+    { theAsciiForecolor = WHITE
     , theAsciiBackcolor = BLACK
     , theAsciiCursor    = textGridLocation
     , theAsciiWinOff    = textGridLocation
     , theAsciiWinSize   = textGridLocation
-    , theAsciiCellSize  = V2 12.0 20.0
+    , theAsciiFontSize  = 40.0
     , theAsciiMatrix    = vec
     }
 
@@ -65,7 +64,10 @@ startAsciiArtGame winsize = do
   setWindowGridSize winsize
   resizeEvents setWindowGridSize
   keyboardEvents $ setGameColor <> fillCell
-  onCanvas $ cairoRender $ cairoClearCanvas 0.0 0.0 0.0 0.75
+  bg <- use asciiBackcolor
+  let (r, g, b, a) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
+  onOSBuffer $ cairoRender $ cairoClearCanvas r g b a
+  refreshWindow
 
 ----------------------------------------------------------------------------------------------------
 
@@ -170,8 +172,8 @@ asciiWinOff     = lens theAsciiWinOff $ \ a b -> a{ theAsciiWinOff = b }
 asciiMatrix     :: Lens' AsciiArtGame (Mutable.IOVector Word32)
 asciiMatrix     = lens theAsciiMatrix $ \ a b -> a{ theAsciiMatrix = b }
 
-asciiCellSize   :: Lens' AsciiArtGame (V2 Double)
-asciiCellSize   = lens theAsciiCellSize $ \ a b -> a{ theAsciiCellSize = b }
+asciiFontSize   :: Lens' AsciiArtGame Double
+asciiFontSize   = lens theAsciiFontSize $ \ a b -> a{ theAsciiFontSize = b }
 
 -- | Convert the cursor to a position to an index in the screen vector.
 cursorToIndex :: GtkGUI AsciiArtGame Int
@@ -180,45 +182,58 @@ cursorToIndex = do
   (TextGridLocation (TextGridRow row) (TextGridColumn col)) <- use asciiCursor
   return $ row * colsize + col
 
+redrawAll :: GtkGUI AsciiArtGame ()
+redrawAll = do
+  (TextGridLocation (TextGridRow rows) (TextGridColumn cols)) <- use asciiWinSize
+  forM_ [(row, col) | row <- [0 .. rows], col <- [0 .. cols]] $ \ (row, col) -> do
+    redrawAtPosition $ TextGridLocation (TextGridRow row) (TextGridColumn col)
+
 -- | Find the pixel region covered by the current relative cursor position and redraw it on screen.
 redrawAtPosition :: TextGridLocation -> GtkGUI AsciiArtGame ()
 redrawAtPosition (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) = do
   (TextGridLocation (TextGridRow winOffRow) (TextGridColumn winOffCol)) <- use asciiWinOff
   let row = curRow - winOffRow
   let col = curCol - winOffCol
-  let fontHeight = 20.0 -- TODO: make these value dependent on a configurable font size
-  let fontWidth  = 12.0
+  fontSize <- use asciiFontSize
   word <- Mutable.read <$> use asciiMatrix <*> cursorToIndex >>= liftIO
   onCanvas $ cairoRender $ do
+    -- Get font extents first, all drawing operations are computed from these values.
+    Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
+    Cairo.setFontSize fontSize
+    ext <- Cairo.fontExtents
+    --let ascent     = Cairo.fontExtentsAscent ext
+    let descent    = Cairo.fontExtentsDescent ext
+    let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
+    let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
     -- Draw background
-    cairoSetColor $ gameColor $ gameCellToBackcolor word
+    cairoSetColor $ dark 0.75 $ gameColor $ gameCellToBackcolor word
     op <- Cairo.getOperator
     Cairo.setOperator Cairo.OperatorSource
     Cairo.rectangle
-      (realToFrac  col    * fontWidth + 0.5) (realToFrac  row    * fontHeight + 0.5)
-      (realToFrac (col+1) * fontWidth + 0.5) (realToFrac (row+1) * fontHeight + 0.5)
+      (realToFrac col * fontWidth + 0.5) (realToFrac row * (fontHeight + descent) + 0.5)
+      (fontWidth + 0.5) (fontHeight + descent + 0.5)
     Cairo.fill
     Cairo.setOperator op
-    -- Draw text.
+    -- Draw text
     cairoSetColor $ gameColor $ gameCellToForecolor word
-    Cairo.selectFontFace
-      ("monospace 20.0" :: Strict.Text)
-      Cairo.FontSlantNormal
-      Cairo.FontWeightNormal
-    ext <- Cairo.fontExtents
     Cairo.moveTo
       (realToFrac col * fontWidth + 0.5)
-      (realToFrac (row+1) * fontHeight + 0.5 + Cairo.fontExtentsDescent ext)
+      (realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent)
     Cairo.showText [chr $ fromIntegral $ word .&. 0x003FFFFF]
 
 -- | Get the current size of the window in units of grid cells. This depends on the font size.
 setWindowGridSize :: PixSize -> GtkGUI AsciiArtGame ()
 setWindowGridSize (V2 w h) = do
-  let fontHeight = 20.0 -- TODO: make these value dependent on a configurable font size
-  let fontWidth =  12.0
+  fontSize <- use asciiFontSize
+  ext <- onOSBuffer $ cairoRender $ do
+    Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
+    Cairo.setFontSize fontSize
+    Cairo.fontExtents
+  let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
+  let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
   asciiWinSize .= TextGridLocation
-    (TextGridRow    $ round (realToFrac h / fontHeight :: Float))
-    (TextGridColumn $ round (realToFrac w / fontWidth  :: Float))
+    (TextGridRow    $ round (realToFrac h / fontHeight))
+    (TextGridColumn $ round (realToFrac w / fontWidth ))
 
 -- | Retrieve the current cursor position relative to the window offset so you know where it should
 -- be seen in the window.
