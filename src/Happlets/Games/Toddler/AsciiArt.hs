@@ -79,18 +79,18 @@ data GameColor
 
 gameColor :: GameColor -> Color
 gameColor = \ case
-  RED     -> red
-  ORANGE  -> orange
-  YELLOW  -> yellow
-  GREEN   -> green
-  CYAN    -> cyan
-  BLUE    -> blue
-  VIOLET  -> violet
-  MAGENTA -> magenta
-  BROWN   -> dark 0.5 orange
-  WHITE   -> white
-  GRAY    -> gray
-  BLACK   -> black
+  RED     -> packRGBA32Color 1.0  0.0 0.0 1.0
+  ORANGE  -> packRGBA32Color 1.0  0.5 0.0 1.0
+  YELLOW  -> packRGBA32Color 1.0  1.0 0.0 1.0
+  GREEN   -> packRGBA32Color 0.0  0.5 0.0 1.0
+  CYAN    -> packRGBA32Color 0.0  1.0 1.0 1.0
+  BLUE    -> packRGBA32Color 0.0  0.0 1.0 1.0
+  VIOLET  -> packRGBA32Color 0.5  0.0 1.0 1.0
+  MAGENTA -> packRGBA32Color 1.0  0.0 1.0 1.0
+  BROWN   -> packRGBA32Color 0.5 0.25 0.0 1.0
+  WHITE   -> packRGBA32Color 1.0  1.0 1.0 1.0
+  GRAY    -> packRGBA32Color 0.5  0.5 0.5 1.0
+  BLACK   -> packRGBA32Color 0.0  0.0 0.0 1.0
 
 -- | Takes a keyboard event. If the keyboard event doesn't match a key for setting the color, this
 -- function does nothing.
@@ -206,7 +206,8 @@ redrawAtPosition (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol))
     let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
     let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
     -- Draw background
-    cairoSetColor $ dark 0.75 $ gameColor $ gameCellToBackcolor word
+    let (r, g, b, _) = unpackRGBA32Color $ gameColor $ gameCellToBackcolor word
+    Cairo.setSourceRGBA r g b 0.75
     op <- Cairo.getOperator
     Cairo.setOperator Cairo.OperatorSource
     Cairo.rectangle
