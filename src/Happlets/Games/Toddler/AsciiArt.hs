@@ -252,8 +252,9 @@ setWindowGridSize (V2 w h) = do
     Cairo.fontExtents
   let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
   let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
+  let descent    = Cairo.fontExtentsDescent ext
   asciiWinSize .= TextGridLocation
-    (TextGridRow    $ round (realToFrac h / fontHeight))
+    (TextGridRow    $ round (realToFrac h / (fontHeight + descent)))
     (TextGridColumn $ round (realToFrac w / fontWidth ))
 
 -- | Retrieve the current cursor position relative to the window offset so you know where it should
