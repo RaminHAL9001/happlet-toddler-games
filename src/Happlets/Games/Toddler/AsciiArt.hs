@@ -6,6 +6,8 @@ import           Happlets.Draw.Text
                      TextGridLocation(..), TextGridSize, textGridLocation
                    )
 
+import           Control.Monad.Reader
+
 import           Data.Bits
 import           Data.Semigroup
 import qualified Data.Vector.Unboxed.Mutable as Mutable
@@ -129,7 +131,7 @@ writeToCellWithColor
   -> Char
   -> GtkGUI AsciiArtGame ()
 writeToCellWithColor loc fg bg c = do
-  ( Mutable.write <$> use asciiMatrix <*> locationToIndex loc <*>
+  ( Mutable.write <$> use asciiMatrix <*> pure (locationToIndex theAsciiMatrixSize loc) <*>
       pure (fromIntegral (ord c) .|. gameForecolorToCell fg .|. gameBackcolorToCell bg)
     ) >>= liftIO
   use asciiCursor >>= redrawAtPosition . pure
@@ -184,6 +186,9 @@ gameCellToBackcolor = toEnum . fromIntegral . (0x0F .&.) . (`shift` (-26))
 gameCellToForecolor :: Word32 -> GameColor
 gameCellToForecolor = toEnum . fromIntegral . (0x0F .&.) . (`shift` (-22))
 
+gameCellToChar :: Word32 -> Char
+gameCellToChar = chr . fromIntegral . (.&. 0x003FFFFF)
+
 -- | The matrix size is fixed at 512 columns, 256 rows of text, so we don't have to do a bunch of
 -- resizing of rows and colums. The memory taken for the buffer is
 -- @256*512*('Data.Bits.bitSize' 0 :: 'Data.Word.Word32') == 2^8 * 2^9 * 2^2 == 2^19@
@@ -223,6 +228,82 @@ redrawAll = do
     <$> (TextGridRow    <$> [lowRow .. lowRow + rows])
     <*> (TextGridColumn <$> [lowCol .. lowCol + cols])
 
+data GridMapper
+  = GridMapper
+    { gridCursor      :: TextGridLocation -- ^ current cursor position
+    , gridMatrixIndex :: Int -- ^ the position in the text matrix we are inspecting
+    , gridMatrix      :: Mutable.IOVector Word32 -- ^ the text matrix
+    , gridX           :: Double -- ^ grid cell X position
+    , gridY           :: Double -- ^ grid cell Y position
+    , gridWidth       :: Double -- ^ grid cell width
+    , gridHeight      :: Double -- ^ grid cell height
+    , gridTextX       :: Double -- ^ grid text point X position
+    , gridTextY       :: Double -- ^ grid text point 
+    }
+
+data CharMatrixMapper
+  = CharMatrixMapper
+    { theMatrixForecolor :: GameColor
+    , theMatrixBackcolor :: GameColor
+    , theMatrixChar      :: Char
+    }
+
+matrixMapperToWord32 :: CharMatrixMapper -> Word32
+matrixMapperToWord32 m =
+  fromIntegral (ord $ theMatrixChar m) .|.
+  gameForecolorToCell (theMatrixForecolor m) .|.
+  gameBackcolorToCell (theMatrixBackcolor m)
+
+matrixMapper :: Word32 -> CharMatrixMapper
+matrixMapper word = CharMatrixMapper
+  { theMatrixForecolor = gameCellToForecolor word
+  , theMatrixBackcolor = gameCellToBackcolor word
+  , theMatrixChar      = gameCellToChar word
+  }
+
+matrixForecolor :: Lens' CharMatrixMapper GameColor
+matrixForecolor = lens theMatrixForecolor $ \ a b -> a{ theMatrixForecolor = b }
+
+matrixBackcolor :: Lens' CharMatrixMapper GameColor
+matrixBackcolor = lens theMatrixBackcolor $ \ a b -> a{ theMatrixBackcolor = b }
+
+matrixChar :: Lens' CharMatrixMapper Char
+matrixChar = lens theMatrixChar $ \ a b -> a{ theMatrixChar = b }
+
+mapGridLocations
+  :: [TextGridLocation]
+  -> ReaderT GridMapper (StateT CharMatrixMapper Cairo.Render) Bool
+  -> GtkGUI AsciiArtGame ()
+mapGridLocations points f = do
+  (TextGridLocation (TextGridRow winOffRow) (TextGridColumn winOffCol)) <- use asciiWinOff
+  fontSize <- use asciiFontSize
+  matrix   <- use asciiMatrix
+  onCanvas $ cairoRender $ do
+    -- Get font extents first, all drawing operations are computed from these values.
+    Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
+    Cairo.setFontSize fontSize
+    ext <- Cairo.fontExtents
+    let descent    = Cairo.fontExtentsDescent ext
+    let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
+    let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
+    forM_ points $ \ point@(TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) -> do
+      let row = curRow - winOffRow
+      let col = curCol - winOffCol
+      let i   = locationToIndex theAsciiMatrixSize point
+      (update, m) <- liftIO (matrixMapper <$> Mutable.read matrix i) >>= runStateT
+        ( runReaderT f GridMapper
+            { gridCursor      = point
+            , gridMatrixIndex = i
+            , gridMatrix      = matrix
+            , gridX      = realToFrac col * fontWidth + 0.5
+            , gridY      = realToFrac row * (fontHeight + descent) + 0.5
+            , gridWidth  = fontWidth  + 0.5
+            , gridHeight = fontHeight + descent + 0.5
+            , gridTextX  = realToFrac col * fontWidth + 0.5
+            , gridTextY  = realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent
+            })
+      when update $ liftIO $ Mutable.write matrix i $ matrixMapperToWord32 m
+
 -- | Find the pixel region covered by the current relative cursor position and redraw it on screen.
 redrawAtPosition :: [TextGridLocation] -> GtkGUI AsciiArtGame ()
 redrawAtPosition points = do
@@ -234,7 +315,6 @@ redrawAtPosition points = do
     Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
     Cairo.setFontSize fontSize
     ext <- Cairo.fontExtents
-    --let ascent     = Cairo.fontExtentsAscent ext
     let descent    = Cairo.fontExtentsDescent ext
     let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
     let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
@@ -299,14 +379,15 @@ getRelativeCursor = do
 -- | Convert a 'TextGridLocation' to an index in the 'asciiMatrix'. Locations that are out of bounds
 -- are "wrapped around" using the 'Prelude.mod' operator to ensure they are always in bounds, so
 -- this function never throws an exception.
-locationToIndex :: TextGridLocation -> GtkGUI AsciiArtGame Int
-locationToIndex (TextGridLocation (TextGridRow row) (TextGridColumn col)) = do
-  let (TextGridLocation (TextGridRow rowsize) (TextGridColumn colsize)) = theAsciiMatrixSize
-  return $ mod row rowsize * colsize + mod col colsize
+locationToIndex :: TextGridSize -> TextGridLocation -> Int
+locationToIndex
+  (TextGridLocation (TextGridRow rowsize) (TextGridColumn colsize))
+  (TextGridLocation (TextGridRow row) (TextGridColumn col)) =
+    mod row rowsize * colsize + mod col colsize
 
 -- | Convert the cursor to a position to an index in the 'asciiMatrix'.
 cursorToIndex :: GtkGUI AsciiArtGame Int
-cursorToIndex = use asciiCursor >>= locationToIndex
+cursorToIndex = locationToIndex theAsciiMatrixSize <$> use asciiCursor
 
 -- | Advance the cursor down by @n@ rows and forward by @n@ columns. The cursor is wrapped to the
 -- window without modifying the window's offset in the text matrix, allowing the cursor to be
@@ -315,6 +396,9 @@ advanceCursor :: TextGridRow -> TextGridColumn -> GtkGUI AsciiArtGame ()
 advanceCursor (TextGridRow deltaRow) (TextGridColumn deltaCol) = do
   (TextGridLocation (TextGridRow winRowSize) (TextGridColumn winColSize)) <- use asciiWinSize
   (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) <- getRelativeCursor
+  -- Simple wrapping cursor algorithm. The cursor wraps and advances to the next row when it goes
+  -- beyond the final column of the screen, the cursor wraps to the first row if it advances beyond
+  -- the final row.
   let offset = (curRow + deltaRow) * winColSize + curCol + deltaCol
   let (newRow, newCol) = divMod offset winColSize
   asciiCursor .= TextGridLocation (TextGridRow $ mod newRow winRowSize) (TextGridColumn $ newCol)
