@@ -228,8 +228,24 @@ redrawAll = do
     <$> (TextGridRow    <$> [lowRow .. lowRow + rows])
     <*> (TextGridColumn <$> [lowCol .. lowCol + cols])
 
-data GridMapper
-  = GridMapper
+----------------------------------------------------------------------------------------------------
+
+newtype GridMapper m a
+  = GridMapper (ReaderT GridMapEnv (StateT CharMatrixMapState m) a)
+  deriving (Functor, Applicative, Monad, MonadIO)
+
+instance Monad m => MonadState CharMatrixMapState (GridMapper m) where
+  state = GridMapper . lift . state
+
+instance Monad m => MonadReader GridMapEnv (GridMapper m) where
+  ask = GridMapper ask
+  local loc (GridMapper f) = GridMapper $ local loc f
+
+instance MonadTrans GridMapper where
+  lift = GridMapper . lift . lift
+
+data GridMapEnv
+  = GridMapEnv
     { gridCursor      :: TextGridLocation -- ^ current cursor position
     , gridMatrixIndex :: Int -- ^ the position in the text matrix we are inspecting
     , gridMatrix      :: Mutable.IOVector Word32 -- ^ the text matrix
@@ -241,40 +257,43 @@ data GridMapper
     , gridTextY       :: Double -- ^ grid text point 
     }
 
-data CharMatrixMapper
-  = CharMatrixMapper
+data CharMatrixMapState
+  = CharMatrixMapState
     { theMatrixForecolor :: GameColor
     , theMatrixBackcolor :: GameColor
     , theMatrixChar      :: Char
     }
 
-matrixMapperToWord32 :: CharMatrixMapper -> Word32
+runGridMapper :: GridMapper m a -> GridMapEnv -> CharMatrixMapState -> m (a, CharMatrixMapState)
+runGridMapper (GridMapper f) = runStateT . runReaderT f
+
+matrixMapperToWord32 :: CharMatrixMapState -> Word32
 matrixMapperToWord32 m =
-  fromIntegral (ord $ theMatrixChar m) .|.
+  fromIntegral (ord $ theMatrixChar m) .&. 0x003FFFFF .|.
   gameForecolorToCell (theMatrixForecolor m) .|.
   gameBackcolorToCell (theMatrixBackcolor m)
 
-matrixMapper :: Word32 -> CharMatrixMapper
-matrixMapper word = CharMatrixMapper
+matrixMapper :: Word32 -> CharMatrixMapState
+matrixMapper word = CharMatrixMapState
   { theMatrixForecolor = gameCellToForecolor word
   , theMatrixBackcolor = gameCellToBackcolor word
   , theMatrixChar      = gameCellToChar word
   }
 
-matrixForecolor :: Lens' CharMatrixMapper GameColor
+matrixForecolor :: Lens' CharMatrixMapState GameColor
 matrixForecolor = lens theMatrixForecolor $ \ a b -> a{ theMatrixForecolor = b }
 
-matrixBackcolor :: Lens' CharMatrixMapper GameColor
+matrixBackcolor :: Lens' CharMatrixMapState GameColor
 matrixBackcolor = lens theMatrixBackcolor $ \ a b -> a{ theMatrixBackcolor = b }
 
-matrixChar :: Lens' CharMatrixMapper Char
+matrixChar :: Lens' CharMatrixMapState Char
 matrixChar = lens theMatrixChar $ \ a b -> a{ theMatrixChar = b }
 
 mapGridLocations
-  :: [TextGridLocation]
-  -> ReaderT GridMapper (StateT CharMatrixMapper Cairo.Render) Bool
+  :: GridMapper Cairo.Render Bool
+  -> [TextGridLocation]
   -> GtkGUI AsciiArtGame ()
-mapGridLocations points f = do
+mapGridLocations f points = do
   (TextGridLocation (TextGridRow winOffRow) (TextGridColumn winOffCol)) <- use asciiWinOff
   fontSize <- use asciiFontSize
   matrix   <- use asciiMatrix
@@ -290,53 +309,36 @@ mapGridLocations points f = do
       let row = curRow - winOffRow
       let col = curCol - winOffCol
       let i   = locationToIndex theAsciiMatrixSize point
-      (update, m) <- liftIO (matrixMapper <$> Mutable.read matrix i) >>= runStateT
-        ( runReaderT f GridMapper
+      (update, m) <- liftIO (matrixMapper <$> Mutable.read matrix i) >>=
+        ( runGridMapper f GridMapEnv
             { gridCursor      = point
             , gridMatrixIndex = i
             , gridMatrix      = matrix
-            , gridX      = realToFrac col * fontWidth + 0.5
-            , gridY      = realToFrac row * (fontHeight + descent) + 0.5
-            , gridWidth  = fontWidth  + 0.5
-            , gridHeight = fontHeight + descent + 0.5
-            , gridTextX  = realToFrac col * fontWidth + 0.5
-            , gridTextY  = realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent
+            , gridX           = realToFrac col * fontWidth + 0.5
+            , gridY           = realToFrac row * (fontHeight + descent) + 0.5
+            , gridWidth       = fontWidth  + 0.5
+            , gridHeight      = fontHeight + descent + 0.5
+            , gridTextX       = realToFrac col * fontWidth + 0.5
+            , gridTextY       = realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent
             })
       when update $ liftIO $ Mutable.write matrix i $ matrixMapperToWord32 m
 
 -- | Find the pixel region covered by the current relative cursor position and redraw it on screen.
 redrawAtPosition :: [TextGridLocation] -> GtkGUI AsciiArtGame ()
-redrawAtPosition points = do
-  (TextGridLocation (TextGridRow winOffRow) (TextGridColumn winOffCol)) <- use asciiWinOff
-  fontSize <- use asciiFontSize
-  word <- Mutable.read <$> use asciiMatrix <*> cursorToIndex >>= liftIO
-  onCanvas $ cairoRender $ do
-    -- Get font extents first, all drawing operations are computed from these values.
-    Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
-    Cairo.setFontSize fontSize
-    ext <- Cairo.fontExtents
-    let descent    = Cairo.fontExtentsDescent ext
-    let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
-    let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
-    forM_ points $ \ (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) -> do
-      -- Draw background
-      let (r, g, b, _) = unpackRGBA32Color $ gameColor $ gameCellToBackcolor word
-      Cairo.setSourceRGBA r g b 0.75
-      op <- Cairo.getOperator
-      Cairo.setOperator Cairo.OperatorSource
-      let row = curRow - winOffRow
-      let col = curCol - winOffCol
-      Cairo.rectangle
-        (realToFrac col * fontWidth + 0.5) (realToFrac row * (fontHeight + descent) + 0.5)
-        (fontWidth + 0.5) (fontHeight + descent + 0.5)
-      Cairo.fill
-      Cairo.setOperator op
-      -- Draw text
-      cairoSetColor $ gameColor $ gameCellToForecolor word
-      Cairo.moveTo
-        (realToFrac col * fontWidth + 0.5)
-        (realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent)
-      Cairo.showText [chr $ fromIntegral $ word .&. 0x003FFFFF]
+redrawAtPosition = mapGridLocations $ do
+  -- Draw background
+  (r, g, b, _) <- unpackRGBA32Color . gameColor <$> use matrixBackcolor
+  lift $ Cairo.setSourceRGBA r g b 0.75
+  op <- lift $ Cairo.getOperator
+  lift $ Cairo.setOperator Cairo.OperatorSource
+  Cairo.rectangle <$> asks gridX <*> asks gridY <*> asks gridWidth <*> asks gridHeight >>= lift
+  lift $ Cairo.fill
+  lift $ Cairo.setOperator op
+  -- Draw text
+  gameColor <$> use matrixForecolor >>= lift . cairoSetColor
+  Cairo.moveTo <$> asks gridTextX <*> asks gridTextY >>= lift
+  use matrixChar >>= lift . Cairo.showText . (: [])
+  return False -- False signifies that the matrix was not updated.
 
 -- | Get the current size of the window in units of grid cells. This depends on the font size.
 pixPointToGrid :: PixCoord -> GtkGUI AsciiArtGame TextGridLocation
