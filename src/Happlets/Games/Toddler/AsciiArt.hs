@@ -14,6 +14,8 @@ import           Data.Word
 
 import           Linear.V2
 
+import           System.IO
+
 import qualified Graphics.Rendering.Cairo    as Cairo
 
 ----------------------------------------------------------------------------------------------------
@@ -62,13 +64,13 @@ newAsciiArtGame = do
 
 startAsciiArtGame :: PixSize -> GtkGUI AsciiArtGame ()
 startAsciiArtGame winsize = do
-  setWindowGridSize winsize
-  resizeEvents $ setWindowGridSize >=> \ () -> do
-    bg <- use asciiBackcolor
-    let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
-    onCanvas $ cairoRender $ cairoClearCanvas r g b 0.75
-    refreshWindow
+  updateWindowGridSize winsize
+  resizeEvents redrawWindow
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
+  mouseEvents MouseButton $ \ case
+    (Mouse _ True mod LeftClick coord) | mod == noModifiers ->
+      mouseToGrid coord >>= assign asciiCursor
+    _ -> return ()
   bg <- use asciiBackcolor
   let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
   onCanvas $ cairoRender $ cairoClearCanvas r g b 0.75
@@ -116,23 +118,37 @@ setGameColor = \ case
       FuncKey 11 -> color .= GRAY
       FuncKey 12 -> color .= BLACK
       _          -> return ()
-  _                           -> return ()
+  RawKey   pressed mods point -> liftIO $ hPutStrLn stderr $
+    (if pressed then "[raw key DOWN] " else "[raw  key  UP] ") ++ show point ++ ' ' : show mods
+
+-- | Write to a given cell location with a given color.
+writeToCellWithColor
+  :: TextGridLocation
+  -> GameColor
+  -> GameColor
+  -> Char
+  -> GtkGUI AsciiArtGame ()
+writeToCellWithColor loc fg bg c = do
+  ( Mutable.write <$> use asciiMatrix <*> locationToIndex loc <*>
+      pure (fromIntegral (ord c) .|. gameForecolorToCell fg .|. gameBackcolorToCell bg)
+    ) >>= liftIO
+  use asciiCursor >>= redrawAtPosition . pure
+
+-- | Write to a cell with the current color at a different location.
+writeToCellAt :: TextGridLocation -> Char -> GtkGUI AsciiArtGame ()
+writeToCellAt loc c = join $ 
+  writeToCellWithColor loc <$> use asciiForecolor <*> use asciiBackcolor <*> pure c
+
+-- | Write to a cell at the current cursor position with the current color.
+writeToCell :: Char -> GtkGUI AsciiArtGame ()
+writeToCell c = use asciiCursor >>= \ loc -> writeToCellAt loc c
 
 fillCell :: Keyboard -> GtkGUI AsciiArtGame ()
 fillCell = \ case
   Keyboard pressed mods point -> 
     when (pressed && not (altIsSet mods || ctrlIsSet mods || superIsSet mods)) $ case point of
-      CharKey c -> do
-        fg <- use asciiForecolor
-        bg <- use asciiBackcolor
-        ( Mutable.write
-            <$> use asciiMatrix
-            <*> cursorToIndex
-            <*> pure (fromIntegral (ord c) .|. gameForecolorToCell fg .|. gameBackcolorToCell bg)
-          ) >>= liftIO
-        use asciiCursor >>= redrawAtPosition
-        advanceCursor (TextGridRow 0) (TextGridColumn 1)
-      _ -> return ()
+      CharKey c -> writeToCell c >> advanceCursor (TextGridRow 0) (TextGridColumn 1)
+      _         -> return ()
   _                           -> return ()
 
 moveCursor :: Keyboard -> GtkGUI AsciiArtGame ()
@@ -144,6 +160,7 @@ moveCursor = \ case
     RightArrowKey -> advanceCursor (TextGridRow   0 ) (TextGridColumn   1 )
     EnterKey      -> enterKey
     ReturnKey     -> enterKey
+    BackSpaceKey  -> advanceCursor (TextGridRow   0 ) (TextGridColumn (-1)) >> writeToCell ' '
     _             -> return ()
   _             -> return ()
   where
@@ -195,25 +212,21 @@ asciiMatrix     = lens theAsciiMatrix $ \ a b -> a{ theAsciiMatrix = b }
 asciiFontSize   :: Lens' AsciiArtGame Double
 asciiFontSize   = lens theAsciiFontSize $ \ a b -> a{ theAsciiFontSize = b }
 
--- | Convert the cursor to a position to an index in the screen vector.
-cursorToIndex :: GtkGUI AsciiArtGame Int
-cursorToIndex = do
-  let (TextGridLocation (TextGridRow _) (TextGridColumn colsize)) = theAsciiMatrixSize
-  (TextGridLocation (TextGridRow row) (TextGridColumn col)) <- use asciiCursor
-  return $ row * colsize + col
+redrawWindow :: PixSize -> GtkGUI AsciiArtGame ()
+redrawWindow siz = updateWindowGridSize siz >> redrawAll
 
 redrawAll :: GtkGUI AsciiArtGame ()
 redrawAll = do
-  (TextGridLocation (TextGridRow rows) (TextGridColumn cols)) <- use asciiWinSize
-  forM_ [(row, col) | row <- [0 .. rows], col <- [0 .. cols]] $ \ (row, col) -> do
-    redrawAtPosition $ TextGridLocation (TextGridRow row) (TextGridColumn col)
+  (TextGridLocation (TextGridRow lowRow) (TextGridColumn lowCol)) <- use asciiWinOff
+  (TextGridLocation (TextGridRow rows  ) (TextGridColumn cols  )) <- use asciiWinSize
+  redrawAtPosition $ TextGridLocation
+    <$> (TextGridRow    <$> [lowRow .. lowRow + rows])
+    <*> (TextGridColumn <$> [lowCol .. lowCol + cols])
 
 -- | Find the pixel region covered by the current relative cursor position and redraw it on screen.
-redrawAtPosition :: TextGridLocation -> GtkGUI AsciiArtGame ()
-redrawAtPosition (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) = do
+redrawAtPosition :: [TextGridLocation] -> GtkGUI AsciiArtGame ()
+redrawAtPosition points = do
   (TextGridLocation (TextGridRow winOffRow) (TextGridColumn winOffCol)) <- use asciiWinOff
-  let row = curRow - winOffRow
-  let col = curCol - winOffCol
   fontSize <- use asciiFontSize
   word <- Mutable.read <$> use asciiMatrix <*> cursorToIndex >>= liftIO
   onCanvas $ cairoRender $ do
@@ -225,26 +238,29 @@ redrawAtPosition (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol))
     let descent    = Cairo.fontExtentsDescent ext
     let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
     let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
-    -- Draw background
-    let (r, g, b, _) = unpackRGBA32Color $ gameColor $ gameCellToBackcolor word
-    Cairo.setSourceRGBA r g b 0.75
-    op <- Cairo.getOperator
-    Cairo.setOperator Cairo.OperatorSource
-    Cairo.rectangle
-      (realToFrac col * fontWidth + 0.5) (realToFrac row * (fontHeight + descent) + 0.5)
-      (fontWidth + 0.5) (fontHeight + descent + 0.5)
-    Cairo.fill
-    Cairo.setOperator op
-    -- Draw text
-    cairoSetColor $ gameColor $ gameCellToForecolor word
-    Cairo.moveTo
-      (realToFrac col * fontWidth + 0.5)
-      (realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent)
-    Cairo.showText [chr $ fromIntegral $ word .&. 0x003FFFFF]
+    forM_ points $ \ (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) -> do
+      -- Draw background
+      let (r, g, b, _) = unpackRGBA32Color $ gameColor $ gameCellToBackcolor word
+      Cairo.setSourceRGBA r g b 0.75
+      op <- Cairo.getOperator
+      Cairo.setOperator Cairo.OperatorSource
+      let row = curRow - winOffRow
+      let col = curCol - winOffCol
+      Cairo.rectangle
+        (realToFrac col * fontWidth + 0.5) (realToFrac row * (fontHeight + descent) + 0.5)
+        (fontWidth + 0.5) (fontHeight + descent + 0.5)
+      Cairo.fill
+      Cairo.setOperator op
+      -- Draw text
+      cairoSetColor $ gameColor $ gameCellToForecolor word
+      Cairo.moveTo
+        (realToFrac col * fontWidth + 0.5)
+        (realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent)
+      Cairo.showText [chr $ fromIntegral $ word .&. 0x003FFFFF]
 
 -- | Get the current size of the window in units of grid cells. This depends on the font size.
-setWindowGridSize :: PixSize -> GtkGUI AsciiArtGame ()
-setWindowGridSize (V2 w h) = do
+pixPointToGrid :: PixCoord -> GtkGUI AsciiArtGame TextGridLocation
+pixPointToGrid (V2 x y) = do
   fontSize <- use asciiFontSize
   ext <- onOSBuffer $ cairoRender $ do
     Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
@@ -253,9 +269,22 @@ setWindowGridSize (V2 w h) = do
   let fontHeight = max (Cairo.fontExtentsMaxYadvance ext) fontSize
   let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
   let descent    = Cairo.fontExtentsDescent ext
-  asciiWinSize .= TextGridLocation
-    (TextGridRow    $ round (realToFrac h / (fontHeight + descent)))
-    (TextGridColumn $ round (realToFrac w / fontWidth ))
+  return $ TextGridLocation
+    (TextGridRow    $ round (realToFrac y / (fontHeight + descent)))
+    (TextGridColumn $ round (realToFrac x / fontWidth ))
+
+-- | Convert a mouse position (window local coordinates) to a global 'asciiMatrix' location.
+mouseToGrid :: PixCoord -> GtkGUI AsciiArtGame TextGridLocation
+mouseToGrid = pixPointToGrid >=> \ (TextGridLocation (TextGridRow row) (TextGridColumn col)) -> do
+  (TextGridLocation (TextGridRow offRow) (TextGridColumn offCol)) <- use asciiWinOff
+  return $ TextGridLocation
+    (TextGridRow    $ row + offRow)
+    (TextGridColumn $ col + offCol)
+
+-- | Sets the 'asciiWinSize' to the result of 'pixPointToGrid', caching the grid size for other
+-- computations to use. This function must be called whenever the size of the app window changes.
+updateWindowGridSize :: PixSize -> GtkGUI AsciiArtGame ()
+updateWindowGridSize = pixPointToGrid >=> assign asciiWinSize
 
 -- | Retrieve the current cursor position relative to the window offset so you know where it should
 -- be seen in the window.
@@ -267,6 +296,18 @@ getRelativeCursor = do
     (TextGridRow    $ globalRow - winOffRow)
     (TextGridColumn $ globalCol - winOffCol)
 
+-- | Convert a 'TextGridLocation' to an index in the 'asciiMatrix'. Locations that are out of bounds
+-- are "wrapped around" using the 'Prelude.mod' operator to ensure they are always in bounds, so
+-- this function never throws an exception.
+locationToIndex :: TextGridLocation -> GtkGUI AsciiArtGame Int
+locationToIndex (TextGridLocation (TextGridRow row) (TextGridColumn col)) = do
+  let (TextGridLocation (TextGridRow rowsize) (TextGridColumn colsize)) = theAsciiMatrixSize
+  return $ mod row rowsize * colsize + mod col colsize
+
+-- | Convert the cursor to a position to an index in the 'asciiMatrix'.
+cursorToIndex :: GtkGUI AsciiArtGame Int
+cursorToIndex = use asciiCursor >>= locationToIndex
+
 -- | Advance the cursor down by @n@ rows and forward by @n@ columns. The cursor is wrapped to the
 -- window without modifying the window's offset in the text matrix, allowing the cursor to be
 -- wrapped more easily, as opposed to only wrapping when the end of the matrix is reached.
@@ -274,8 +315,6 @@ advanceCursor :: TextGridRow -> TextGridColumn -> GtkGUI AsciiArtGame ()
 advanceCursor (TextGridRow deltaRow) (TextGridColumn deltaCol) = do
   (TextGridLocation (TextGridRow winRowSize) (TextGridColumn winColSize)) <- use asciiWinSize
   (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) <- getRelativeCursor
-  let newCol = curCol + deltaCol
-  asciiCursor .= TextGridLocation
-    (TextGridRow $ flip mod winRowSize $ deltaRow + curRow +
-      if newCol >= winColSize then 1 else if newCol <= 0 then (-1) else 0)
-    (TextGridColumn $ mod newCol winColSize)
+  let offset = (curRow + deltaRow) * winColSize + curCol + deltaCol
+  let (newRow, newCol) = divMod offset winColSize
+  asciiCursor .= TextGridLocation (TextGridRow $ mod newRow winRowSize) (TextGridColumn $ newCol)
