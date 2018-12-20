@@ -6,6 +6,7 @@ import           Happlets.Draw.Text
                      TextGridLocation(..), TextGridSize, textGridLocation
                    )
 
+import           Control.Concurrent          (threadDelay)
 import           Control.Monad.Reader
 
 import           Data.Bits
@@ -13,8 +14,6 @@ import           Data.Semigroup
 import qualified Data.Vector.Unboxed.Mutable as Mutable
 import qualified Data.Text                   as Strict
 import           Data.Word
-
-import           Linear.V2
 
 import           System.IO
 
@@ -38,44 +37,58 @@ import qualified Graphics.Rendering.Cairo    as Cairo
 -- cursor, and then pressing a key to fill the line with characters.
 data AsciiArtGame
   = AsciiArtGame
-    { theAsciiForecolor :: !GameColor
-    , theAsciiBackcolor :: !GameColor
-    , theAsciiCursor    :: !TextGridLocation
-    , theAsciiWinSize   :: !TextGridSize
+    { theAsciiForecolor     :: !GameColor
+    , theAsciiBackcolor     :: !GameColor
+    , theAsciiCursor        :: !TextGridLocation
+    , theAsciiWinSize       :: !TextGridSize
       -- ^ the size of the game's visible window, in grid size units.
-    , theAsciiWinOff    :: !TextGridLocation
+    , theAsciiWinOff        :: !TextGridLocation
       -- ^ the window offset relative to the top-left of the text matrix.
-    , theAsciiFontSize  :: !Double
-    , theAsciiMatrix    :: !(Mutable.IOVector Word32)
+    , theAsciiFontSize      :: !Double
+    , theAsciiMatrix        :: !(Mutable.IOVector Word32)
+    , theAsciiCursorBlinker :: Maybe Worker
+    , theAsciiCursorShow    :: Bool
     }
 
-newAsciiArtGame :: IO AsciiArtGame
+newAsciiArtGame :: IO (Happlet AsciiArtGame)
 newAsciiArtGame = do
   let (TextGridLocation (TextGridRow rows) (TextGridColumn columns)) = theAsciiMatrixSize
   vec <- Mutable.replicate (rows * columns)
-      (fromIntegral (ord ' ') .|. gameForecolorToCell WHITE .|. gameBackcolorToCell BLACK)
-  return AsciiArtGame
-    { theAsciiForecolor = WHITE
-    , theAsciiBackcolor = BLACK
-    , theAsciiCursor    = textGridLocation
-    , theAsciiWinOff    = textGridLocation
-    , theAsciiWinSize   = textGridLocation
-    , theAsciiFontSize  = 40.0
-    , theAsciiMatrix    = vec
+    (fromIntegral (ord ' ') .|. gameForecolorToCell WHITE .|. gameBackcolorToCell BLACK)
+  makeHapplet AsciiArtGame
+    { theAsciiForecolor     = WHITE
+    , theAsciiBackcolor     = BLACK
+    , theAsciiCursor        = textGridLocation
+    , theAsciiWinOff        = textGridLocation
+    , theAsciiWinSize       = textGridLocation
+    , theAsciiFontSize      = 40.0
+    , theAsciiMatrix        = vec
+    , theAsciiCursorBlinker = Nothing
+    , theAsciiCursorShow    = True
     }
 
 startAsciiArtGame :: PixSize -> GtkGUI AsciiArtGame ()
 startAsciiArtGame winsize = do
   updateWindowGridSize winsize
-  resizeEvents redrawWindow
+  resizeEvents ClearCanvasMode redrawWindow
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
   mouseEvents MouseButton $ \ case
     (Mouse _ True mod LeftClick coord) | mod == noModifiers ->
       mouseToGrid coord >>= assign asciiCursor
     _ -> return ()
+  assign asciiCursorBlinker . Just =<<
+    ( guiWorker "asciiCursorBlinker" $ do
+        position   <- getRelativeCursor
+        showCursor <- use asciiCursorShow
+        liftIO $ hPutStrLn stderr $ "cursor blink " ++ if showCursor then "1" else "0"
+        asciiCursorShow %= not
+        if showCursor then drawCursor position else redrawAtPosition [position]
+        liftIO $ threadDelay 500000
+    )
   bg <- use asciiBackcolor
   let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
-  onCanvas $ cairoRender $ cairoClearCanvas r g b 0.75
+  setupFont onOSBuffer $ return ()
+  setupFont onCanvas   $ cairoRender $ cairoClearCanvas r g b 0.75
 
 ----------------------------------------------------------------------------------------------------
 
@@ -170,6 +183,8 @@ moveCursor = \ case
       advanceCursor (TextGridRow   1 ) (TextGridColumn   0 )
       asciiCursor . gridColumn . columnInt .= 0
 
+----------------------------------------------------------------------------------------------------
+
 -- | The foreground color take up the first 4 bits in the upper 11 bits of the Word32 after the
 -- first 21 reserved for the character.
 gameForecolorToCell :: GameColor -> Word32
@@ -196,6 +211,8 @@ gameCellToChar = chr . fromIntegral . (.&. 0x003FFFFF)
 theAsciiMatrixSize :: TextGridSize
 theAsciiMatrixSize = TextGridLocation (TextGridRow 256) (TextGridColumn 512)
 
+----------------------------------------------------------------------------------------------------
+
 asciiForecolor  :: Lens' AsciiArtGame GameColor
 asciiForecolor  = lens theAsciiForecolor $ \ a b -> a{ theAsciiForecolor = b }
 
@@ -217,8 +234,27 @@ asciiMatrix     = lens theAsciiMatrix $ \ a b -> a{ theAsciiMatrix = b }
 asciiFontSize   :: Lens' AsciiArtGame Double
 asciiFontSize   = lens theAsciiFontSize $ \ a b -> a{ theAsciiFontSize = b }
 
-redrawWindow :: PixSize -> GtkGUI AsciiArtGame ()
-redrawWindow siz = updateWindowGridSize siz >> redrawAll
+asciiCursorBlinker :: Lens' AsciiArtGame (Maybe Worker)
+asciiCursorBlinker = lens theAsciiCursorBlinker $ \ a b -> a{ theAsciiCursorBlinker = b }
+
+asciiCursorShow :: Lens' AsciiArtGame Bool
+asciiCursorShow = lens theAsciiCursorShow $ \ a b -> a{ theAsciiCursorShow = b }
+
+----------------------------------------------------------------------------------------------------
+
+setupFont
+  :: (CairoRender a -> GtkGUI AsciiArtGame a)
+  -> CairoRender a -> GtkGUI AsciiArtGame a
+setupFont renderer continue = do
+  fontSize <- use asciiFontSize
+  renderer $ do
+    cairoRender $ do
+      Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
+      Cairo.setFontSize fontSize
+    continue
+
+redrawWindow :: OldPixSize -> NewPixSize -> GtkGUI AsciiArtGame ()
+redrawWindow _ siz = updateWindowGridSize siz >> redrawAll
 
 redrawAll :: GtkGUI AsciiArtGame ()
 redrawAll = do
@@ -290,14 +326,15 @@ matrixChar :: Lens' CharMatrixMapState Char
 matrixChar = lens theMatrixChar $ \ a b -> a{ theMatrixChar = b }
 
 mapGridLocations
-  :: GridMapper Cairo.Render Bool
+  :: (CairoRender () -> GtkGUI AsciiArtGame ()) -- ^ 'onCanvas' or 'onOSBuffer'
+  -> GridMapper Cairo.Render Bool -- ^ Return True to write grid updates back to the text matrix.
   -> [TextGridLocation]
   -> GtkGUI AsciiArtGame ()
-mapGridLocations f points = do
+mapGridLocations renderer f points = do
   (TextGridLocation (TextGridRow winOffRow) (TextGridColumn winOffCol)) <- use asciiWinOff
   fontSize <- use asciiFontSize
   matrix   <- use asciiMatrix
-  onCanvas $ cairoRender $ do
+  renderer $ cairoRender $ do
     -- Get font extents first, all drawing operations are computed from these values.
     Cairo.selectFontFace ("monospace" :: Strict.Text) Cairo.FontSlantNormal Cairo.FontWeightNormal
     Cairo.setFontSize fontSize
@@ -310,32 +347,62 @@ mapGridLocations f points = do
       let col = curCol - winOffCol
       let i   = locationToIndex theAsciiMatrixSize point
       (update, m) <- liftIO (matrixMapper <$> Mutable.read matrix i) >>=
-        ( runGridMapper f GridMapEnv
-            { gridCursor      = point
-            , gridMatrixIndex = i
-            , gridMatrix      = matrix
-            , gridX           = realToFrac col * fontWidth + 0.5
-            , gridY           = realToFrac row * (fontHeight + descent) + 0.5
-            , gridWidth       = fontWidth  + 0.5
-            , gridHeight      = fontHeight + descent + 0.5
-            , gridTextX       = realToFrac col * fontWidth + 0.5
-            , gridTextY       = realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent
-            })
+        (runGridMapper f GridMapEnv
+          { gridCursor      = point
+          , gridMatrixIndex = i
+          , gridMatrix      = matrix
+          , gridX           = realToFrac col * fontWidth + 0.5
+          , gridY           = realToFrac row * (fontHeight + descent) + 0.5
+          , gridWidth       = fontWidth  + 0.5
+          , gridHeight      = fontHeight + descent + 0.5
+          , gridTextX       = realToFrac col * fontWidth + 0.5
+          , gridTextY       = realToFrac (row+1) * (fontHeight + descent) + 0.5 - descent
+          })
       when update $ liftIO $ Mutable.write matrix i $ matrixMapperToWord32 m
+
+canvasSetGameColor :: Double -> GameColor -> Cairo.Render ()
+canvasSetGameColor a c = do
+  let (r, g, b, _a) = unpackRGBA32Color $ gameColor c
+  Cairo.setSourceRGBA r g b a
+
+-- | Draw the cursor. This is drawn to the OS buffer.
+drawCursor :: TextGridLocation -> GtkGUI AsciiArtGame ()
+drawCursor position = do
+  bg <- use asciiBackcolor
+  fg <- use asciiForecolor
+  flip (mapGridLocations onOSBuffer) [position] $ do
+    x <- asks gridX
+    y <- asks gridY
+    w <- asks gridWidth
+    h <- asks gridHeight
+    lift $ do
+      canvasSetGameColor 0.75 bg
+      op <- Cairo.getOperator
+      lw <- Cairo.getLineWidth
+      Cairo.setOperator Cairo.OperatorSource
+      Cairo.rectangle x y w h
+      Cairo.setLineWidth 0.0
+      Cairo.fill
+      canvasSetGameColor 1.00 fg
+      Cairo.rectangle (x + 2) (y + 2) (w - 4) (h - 4)
+      Cairo.setLineWidth 2.0
+      Cairo.stroke
+      Cairo.setOperator  op
+      Cairo.setLineWidth lw
+    return False
 
 -- | Find the pixel region covered by the current relative cursor position and redraw it on screen.
 redrawAtPosition :: [TextGridLocation] -> GtkGUI AsciiArtGame ()
-redrawAtPosition = mapGridLocations $ do
+redrawAtPosition = mapGridLocations onCanvas $ do
   -- Draw background
-  (r, g, b, _) <- unpackRGBA32Color . gameColor <$> use matrixBackcolor
-  lift $ Cairo.setSourceRGBA r g b 0.75
+  use matrixBackcolor >>= lift . canvasSetGameColor 0.75
   op <- lift $ Cairo.getOperator
   lift $ Cairo.setOperator Cairo.OperatorSource
   Cairo.rectangle <$> asks gridX <*> asks gridY <*> asks gridWidth <*> asks gridHeight >>= lift
   lift $ Cairo.fill
   lift $ Cairo.setOperator op
   -- Draw text
-  gameColor <$> use matrixForecolor >>= lift . cairoSetColor
+  use matrixForecolor >>= lift . canvasSetGameColor 1.0
   Cairo.moveTo <$> asks gridTextX <*> asks gridTextY >>= lift
   use matrixChar >>= lift . Cairo.showText . (: [])
   return False -- False signifies that the matrix was not updated.
@@ -352,8 +419,8 @@ pixPointToGrid (V2 x y) = do
   let fontWidth  = max (Cairo.fontExtentsMaxXadvance ext) (fontHeight / 2.0)
   let descent    = Cairo.fontExtentsDescent ext
   return $ TextGridLocation
-    (TextGridRow    $ round (realToFrac y / (fontHeight + descent)))
-    (TextGridColumn $ round (realToFrac x / fontWidth ))
+    (TextGridRow    $ floor (realToFrac y / (fontHeight + descent)) )
+    (TextGridColumn $ floor (realToFrac x / fontWidth ))
 
 -- | Convert a mouse position (window local coordinates) to a global 'asciiMatrix' location.
 mouseToGrid :: PixCoord -> GtkGUI AsciiArtGame TextGridLocation
