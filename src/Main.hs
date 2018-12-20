@@ -13,5 +13,5 @@ main = happlet gtkHapplet $ do
   quitOnWindowClose   .= True
 
   mainWindow <- newWindow
-  asciiArt   <- liftIO newAsciiArtGame >>= newHapplet
+  asciiArt   <- liftIO newAsciiArtGame
   attachWindow True mainWindow asciiArt startAsciiArtGame
