@@ -6,7 +6,6 @@ import           Happlets.Draw.Text
                      TextGridLocation(..), TextGridSize, textGridLocation
                    )
 
-import           Control.Concurrent          (threadDelay)
 import           Control.Monad.Reader
 
 import           Data.Bits
@@ -72,18 +71,17 @@ startAsciiArtGame winsize = do
   updateWindowGridSize winsize
   resizeEvents ClearCanvasMode redrawWindow
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
-  mouseEvents MouseButton $ \ case
-    (Mouse _ True mod LeftClick coord) | mod == noModifiers ->
-      mouseToGrid coord >>= assign asciiCursor
-    _ -> return ()
+  mouseEvents MouseButton $ \ event -> do
+    case event of
+      (Mouse _ True mod LeftClick coord) | mod == noModifiers ->
+        mouseToGrid coord >>= assign asciiCursor
+      _ -> return ()
   assign asciiCursorBlinker . Just =<<
-    ( guiWorker "asciiCursorBlinker" $ do
+    ( guiWorker "asciiCursorBlinker" (WorkCycleWait 0.5) $ do
         position   <- getRelativeCursor
         showCursor <- use asciiCursorShow
-        liftIO $ hPutStrLn stderr $ "cursor blink " ++ if showCursor then "1" else "0"
         asciiCursorShow %= not
         if showCursor then drawCursor position else redrawAtPosition [position]
-        liftIO $ threadDelay 500000
     )
   bg <- use asciiBackcolor
   let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg

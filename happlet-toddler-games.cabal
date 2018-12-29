@@ -98,7 +98,7 @@ Executable happlet-toddler-games {
   OTHER-MODULES:
     Happlets.Games.Toddler.AsciiArt
 
-  GHC-OPTIONS: -Wall
+  GHC-OPTIONS: -Wall -threaded
     -fno-warn-name-shadowing
     -fno-warn-unused-do-bind
 
