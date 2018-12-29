@@ -178,8 +178,8 @@ moveCursor = \ case
   _             -> return ()
   where
     enterKey = do
-      advanceCursor (TextGridRow   1 ) (TextGridColumn   0 )
       asciiCursor . gridColumn . columnInt .= 0
+      advanceCursor (TextGridRow   1 ) (TextGridColumn   0 )
 
 ----------------------------------------------------------------------------------------------------
 
@@ -377,7 +377,7 @@ drawCursor position = do
       canvasSetGameColor 0.75 bg
       op <- Cairo.getOperator
       lw <- Cairo.getLineWidth
-      Cairo.setOperator Cairo.OperatorSource
+      Cairo.setOperator Cairo.OperatorOver
       Cairo.rectangle x y w h
       Cairo.setLineWidth 0.0
       Cairo.fill
@@ -462,10 +462,13 @@ cursorToIndex = locationToIndex theAsciiMatrixSize <$> use asciiCursor
 advanceCursor :: TextGridRow -> TextGridColumn -> GtkGUI AsciiArtGame ()
 advanceCursor (TextGridRow deltaRow) (TextGridColumn deltaCol) = do
   (TextGridLocation (TextGridRow winRowSize) (TextGridColumn winColSize)) <- use asciiWinSize
-  (TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) <- getRelativeCursor
+  oldPosition@(TextGridLocation (TextGridRow curRow) (TextGridColumn curCol)) <- getRelativeCursor
   -- Simple wrapping cursor algorithm. The cursor wraps and advances to the next row when it goes
   -- beyond the final column of the screen, the cursor wraps to the first row if it advances beyond
   -- the final row.
   let offset = (curRow + deltaRow) * winColSize + curCol + deltaCol
   let (newRow, newCol) = divMod offset winColSize
+  redrawAtPosition [oldPosition]
   asciiCursor .= TextGridLocation (TextGridRow $ mod newRow winRowSize) (TextGridColumn $ newCol)
+  newPosition <- getRelativeCursor
+  drawCursor newPosition
