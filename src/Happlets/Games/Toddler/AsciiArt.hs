@@ -472,3 +472,4 @@ advanceCursor (TextGridRow deltaRow) (TextGridColumn deltaCol) = do
   asciiCursor .= TextGridLocation (TextGridRow $ mod newRow winRowSize) (TextGridColumn $ newCol)
   newPosition <- getRelativeCursor
   drawCursor newPosition
+  asciiCursorShow .= False
