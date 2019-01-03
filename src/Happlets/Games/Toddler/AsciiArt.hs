@@ -173,7 +173,11 @@ moveCursor = \ case
     RightArrowKey -> advanceCursor (TextGridRow   0 ) (TextGridColumn   1 )
     EnterKey      -> enterKey
     ReturnKey     -> enterKey
-    BackSpaceKey  -> advanceCursor (TextGridRow   0 ) (TextGridColumn (-1)) >> writeToCell ' '
+    BackSpaceKey  -> do
+      advanceCursor (TextGridRow   0 ) (TextGridColumn (-1))
+      writeToCell ' '
+      asciiCursorShow .= True
+      use asciiCursor >>= drawCursor
     _             -> return ()
   _             -> return ()
   where
