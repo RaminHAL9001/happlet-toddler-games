@@ -73,8 +73,11 @@ startAsciiArtGame winsize = do
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
   mouseEvents MouseButton $ \ event -> do
     case event of
-      (Mouse _ True mod LeftClick coord) | mod == noModifiers ->
+      (Mouse _ True mod LeftClick coord) | mod == noModifiers -> do
+        getRelativeCursor >>= redrawAtPosition . pure
         mouseToGrid coord >>= assign asciiCursor
+        getRelativeCursor >>= drawCursor
+        asciiCursorShow .= False
       _ -> return ()
   assign asciiCursorBlinker . Just =<<
     ( guiWorker "asciiCursorBlinker" (WorkCycleWait 0.5) $ do
