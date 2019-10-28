@@ -61,27 +61,29 @@ DESCRIPTION   :
     animations in response to winning gameplay, again which sounds and
     images are displayed must be configured by the parent/admin.
 
+    Here are the games that I have actually written:
+
+    1.  __Colorful ASCII Art__: in which players draw pictures with
+        ASCII and can change the forecolor/backcolor of each
+        character. Simple animations are possible.
+
     Here are some game ideas that I want to work on:
 
     1.  __Type the Alphabet__: in which players get a randomly
         selected audio/visual reward for pressing the correct next key
         in the sequence.
 
-    2.  __Colorful ASCII Art__: in which players draw pictures with
-        ASCII and can change the forecolor/backcolor of each
-        character. Simple animations are possible.
-
-    3.  __Musical Instrument__: in which players assign sound effects
+    2.  __Musical Instrument__: in which players assign sound effects
         to letters on the keyboard and can play the sound effects by
         pressing keys.
 
-    4.  __Memory and Matching__: select matching pairs of cards in a
+    3.  __Memory and Matching__: select matching pairs of cards in a
         grid.
 
-    5.  __Virtual Pet__: create a home for your virtual pet, feed it
+    4.  __Virtual Pet__: create a home for your virtual pet, feed it
         and play with it every day, if you don't it will run away.
 
-    6.  __Flashcard Wizard__: explore a procedurally generated world,
+    5.  __Flashcard Wizard__: explore a procedurally generated world,
         learn to defend yourself and attack enemies by answering
         flashcard questions (e.g. arithmetic, spelling), gather
         treasure, trade for supplies, the more flashcards you answer
@@ -103,23 +105,23 @@ Executable happlet-toddler-games {
     -fno-warn-unused-do-bind
 
   BUILD-DEPENDS:
-    binary               >=0.7.0.0  && <0.9.0.0,
-    bytestring           >=0.10.0.0 && <1.0.0.0,
-    cairo                >=0.11.0.0 && <1.0.0.0,
-    containers           >=0.5.5.0  && <0.6.0.0,
-    happlets             >=0.1.0.0  && <=1.0.0.0,
-    happlets-lib-gtk     >=0.1.0.0  && <=1.0.0.0,
-    lens                 >=4.0.0.0  && <5.0.0.0,
-    linear               >=1.20.0   && <2.0.0.0,
-    MonadRandom          >=0.5.0    && <1.0.0, 
-    mtl                  >=2.2.0    && <=2.2.2,
-    primitive            >=0.6.4.0  && <1.0.0.0,
-    tf-random            >=0.5      && <=1.0,
-    semigroups           >=0.16.0   && <0.19.0,
-    time                 >=1.4.0.0  && <1.10.0.0,
-    text                 >=1.1.1.4  && <=2.0.0.0,
-    vector               >=0.11.0.0 && <=1.0.0.0, 
-    base                 >=4.7      && <4.11
+      base
+    , binary
+    , bytestring
+    , cairo
+    , containers
+    , happlets
+    , happlets-lib-gtk
+    , lens
+    , linear
+    , MonadRandom
+    , mtl
+    , primitive
+    , tf-random
+    , semigroups
+    , time
+    , text
+    , vector
 
   DEFAULT-EXTENSIONS:
     DeriveDataTypeable
