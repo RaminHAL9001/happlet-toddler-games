@@ -1,15 +1,15 @@
 module Happlets.Games.Toddler.AsciiArt where
 
-import           Happlets.Lib.Gtk
-import           Happlets.Draw.Text
+import           Happlets.Provider.Gtk2
+import           Happlets.View.Text
                    ( TextGridRow(..), TextGridColumn(..), gridColumn, columnInt,
                      TextGridLocation(..), TextGridSize, textGridLocation
                    )
 
+import           Control.Concurrent
 import           Control.Monad.Reader
 
 import           Data.Bits
-import           Data.Semigroup
 import qualified Data.Vector.Unboxed.Mutable as Mutable
 import qualified Data.Text                   as Strict
 import           Data.Word
@@ -45,7 +45,7 @@ data AsciiArtGame
       -- ^ the window offset relative to the top-left of the text matrix.
     , theAsciiFontSize      :: !Double
     , theAsciiMatrix        :: !(Mutable.IOVector Word32)
-    , theAsciiCursorBlinker :: Maybe Worker
+    , theAsciiCursorBlinker :: Maybe ThreadId
     , theAsciiCursorShow    :: Bool
     }
 
@@ -69,7 +69,7 @@ newAsciiArtGame = do
 startAsciiArtGame :: PixSize -> GtkGUI AsciiArtGame ()
 startAsciiArtGame winsize = do
   updateWindowGridSize winsize
-  resizeEvents ClearCanvasMode redrawWindow
+  resizeEvents CanvasResizeClear redrawWindow
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
   mouseEvents MouseButton $ \ event -> do
     case event of
@@ -79,13 +79,19 @@ startAsciiArtGame winsize = do
         getRelativeCursor >>= drawCursor
         asciiCursorShow .= False
       _ -> return ()
-  assign asciiCursorBlinker . Just =<<
-    ( guiWorker "asciiCursorBlinker" (WorkCycleWait 0.5) $ do
-        position   <- getRelativeCursor
-        showCursor <- use asciiCursorShow
-        asciiCursorShow %= not
-        if showCursor then drawCursor position else redrawAtPosition [position]
-    )
+  forkGUI
+    (\ sendAction -> fix $ \ loop ->
+        ( sendAction $ do
+            position   <- getRelativeCursor
+            showCursor <- use asciiCursorShow
+            asciiCursorShow %= not
+            if showCursor then drawCursor position else redrawAtPosition [position]
+        ) >>=
+        (\ case
+          EventHandlerContinue{} -> threadDelay 500000 >> loop
+          _                      -> void $ sendAction $ asciiCursorBlinker .= Nothing
+        )
+    ) >>= assign asciiCursorBlinker . Just
   bg <- use asciiBackcolor
   let (r, g, b, _) = unpackRGBA32Color $ dark 0.75 $ gameColor bg
   setupFont onOSBuffer $ return ()
@@ -239,7 +245,7 @@ asciiMatrix     = lens theAsciiMatrix $ \ a b -> a{ theAsciiMatrix = b }
 asciiFontSize   :: Lens' AsciiArtGame Double
 asciiFontSize   = lens theAsciiFontSize $ \ a b -> a{ theAsciiFontSize = b }
 
-asciiCursorBlinker :: Lens' AsciiArtGame (Maybe Worker)
+asciiCursorBlinker :: Lens' AsciiArtGame (Maybe ThreadId)
 asciiCursorBlinker = lens theAsciiCursorBlinker $ \ a b -> a{ theAsciiCursorBlinker = b }
 
 asciiCursorShow :: Lens' AsciiArtGame Bool
