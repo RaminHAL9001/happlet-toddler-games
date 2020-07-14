@@ -12,6 +12,5 @@ main = happlet gtkHapplet $ do
   recommendWindowSize .= (1024, 768)
   quitOnWindowClose   .= True
 
-  provider <- newProvider
-  asciiArt <- liftIO newAsciiArtGame
-  attachWindow provider True asciiArt startAsciiArtGame
+  game <- newHappletIO asciiArtGame
+  attachWindow True game startAsciiArtGame

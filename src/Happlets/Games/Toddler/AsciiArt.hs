@@ -49,12 +49,12 @@ data AsciiArtGame
     , theAsciiCursorShow    :: Bool
     }
 
-newAsciiArtGame :: IO (Happlet AsciiArtGame)
-newAsciiArtGame = do
+asciiArtGame :: IO AsciiArtGame
+asciiArtGame = do
   let (TextGridLocation (TextGridRow rows) (TextGridColumn columns)) = theAsciiMatrixSize
   vec <- Mutable.replicate (rows * columns)
     (fromIntegral (ord ' ') .|. gameForecolorToCell WHITE .|. gameBackcolorToCell BLACK)
-  makeHapplet AsciiArtGame
+  return AsciiArtGame
     { theAsciiForecolor     = WHITE
     , theAsciiBackcolor     = BLACK
     , theAsciiCursor        = textGridLocation
