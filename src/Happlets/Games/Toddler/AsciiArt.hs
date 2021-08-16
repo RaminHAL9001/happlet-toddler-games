@@ -1,10 +1,6 @@
 module Happlets.Games.Toddler.AsciiArt where
 
 import           Happlets.Provider.Gtk2
-import           Happlets.View.Text
-                   ( TextGridRow(..), TextGridColumn(..), gridColumn, columnInt,
-                     TextGridLocation(..), TextGridSize, textGridLocation
-                   )
 
 import           Control.Concurrent
 import           Control.Monad.Reader
@@ -71,9 +67,9 @@ startAsciiArtGame winsize = do
   updateWindowGridSize winsize
   resizeEvents CanvasResizeClear redrawWindow
   keyboardEvents $ setGameColor <> fillCell <> moveCursor
-  mouseEvents MouseButton $ \ event -> do
+  mouseSignals MouseButton $ \ event -> do
     case event of
-      (Mouse _ True mod LeftClick coord) | mod == noModifiers -> do
+      (MouseSignal _ True mod LeftClick coord) | mod == noModifiers -> do
         getRelativeCursor >>= redrawAtPosition . pure
         mouseToGrid coord >>= assign asciiCursor
         getRelativeCursor >>= drawCursor
@@ -88,8 +84,8 @@ startAsciiArtGame winsize = do
             if showCursor then drawCursor position else redrawAtPosition [position]
         ) >>=
         (\ case
-          EventHandlerContinue{} -> threadDelay 500000 >> loop
-          _                      -> void $ sendAction $ asciiCursorBlinker .= Nothing
+          ActionOK{} -> threadDelay 500000 >> loop
+          _          -> void $ sendAction $ asciiCursorBlinker .= Nothing
         )
     ) >>= assign asciiCursorBlinker . Just
   bg <- use asciiBackcolor
